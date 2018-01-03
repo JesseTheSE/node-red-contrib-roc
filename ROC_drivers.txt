@@ -1789,13 +1789,13 @@
         "id": "dcbc4390.8b0b1",
         "type": "file in",
         "z": "1349b6.833d364a",
-        "name": "",
+        "name": "File In: dataTypes.csv ",
         "filename": "/ptp/dataTypes.csv",
         "format": "utf8",
         "chunk": false,
         "sendError": false,
-        "x": 530,
-        "y": 1080,
+        "x": 540,
+        "y": 120,
         "wires": [
             [
                 "9e409228.d04ff"
@@ -1814,7 +1814,7 @@
         "crontab": "",
         "once": true,
         "x": 250,
-        "y": 1080,
+        "y": 120,
         "wires": [
             [
                 "dcbc4390.8b0b1"
@@ -1830,57 +1830,10 @@
         "outputs": 1,
         "noerr": 0,
         "x": 970,
-        "y": 1080,
+        "y": 120,
         "wires": [
             []
         ]
-    },
-    {
-        "id": "56be94aa.26ef0c",
-        "type": "inject",
-        "z": "1349b6.833d364a",
-        "name": "Test inject",
-        "topic": "",
-        "payload": "",
-        "payloadType": "date",
-        "repeat": "",
-        "crontab": "",
-        "once": false,
-        "x": 240,
-        "y": 1020,
-        "wires": [
-            [
-                "cbabfb7b.da9ea8"
-            ]
-        ]
-    },
-    {
-        "id": "cbabfb7b.da9ea8",
-        "type": "function",
-        "z": "1349b6.833d364a",
-        "name": "Read global value",
-        "func": "var test = global.get(\"Opcode1\");\nnode.warn(global.get(\"Opcode0\"));\nnode.warn(test);\nnode.warn(global.get(\"Opcode2\"));\n\nmsg.payload=test;\nreturn msg;",
-        "outputs": 1,
-        "noerr": 0,
-        "x": 530,
-        "y": 1020,
-        "wires": [
-            [
-                "94d4cc47.1b8ea"
-            ]
-        ]
-    },
-    {
-        "id": "94d4cc47.1b8ea",
-        "type": "debug",
-        "z": "1349b6.833d364a",
-        "name": "",
-        "active": true,
-        "console": "false",
-        "complete": "false",
-        "x": 1030,
-        "y": 1020,
-        "wires": []
     },
     {
         "id": "dd62f3ea.68cad",
