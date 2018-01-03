@@ -8,7 +8,7 @@ The flows don't use any nodes that are not included in Node-RED by default. The 
 # Adding the drivers to a Node-RED flow
 ### Note: This instructions are geared towards the user who has never used github before. There are often other, easier ways to accomplish the following for those already familiar.
 ### 1) Download files to your computer
-Go to the main the main node-red-contrib-roc directory (you're likely there now) and click on the green "Clone or Download" button and select "Download ZIP." A ZIP file containing the drivers and dataType list will be downloaded. 
+Go to the main the main node-red-contrib-roc directory (you're likely there now) and click on the green "Clone or download" button and select "Download ZIP." A ZIP file containing the drivers and dataType list will be downloaded. 
 
 ### 2) Import flow to Node-RED
 Open the downloaded ZIP file and open the "ROC_drivers.txt" file contained within. Select all of the text (ctrl-a) and copy to your clipboard (ctrl-c). In the Node-Red interface, click on the menu and select "Import">"Clipboard. Paste the contents of your clipboard (ctrl-v) in the window and choose whether you want it to be included in the current flow or a new one. Click "Import" and the drivers will show up where you selected.
