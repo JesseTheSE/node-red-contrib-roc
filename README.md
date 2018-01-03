@@ -24,7 +24,7 @@ Click the red "Deploy" button in the Node-RED window and the flow will be copied
 
 # Using the drivers
 ## Note: These drivers currently only support IP communications. To connect to a ROC via a serial connection, a terminal server must be used. If using ZumLink programmable radios, see "Using the terminal server on a ZumLink Programmable radios" below.
-(/ROC_drivers.jpeg)
+[](/ROC_drivers.jpg)
 Each line in the flow contains an inject node, the driver subflow, and a debug node. The inject node sends the IP Address of the target ROC, the IP Port for communication, the target device Group and Address (240, 240 by default), and any information needed for the command. The info tab on each driver subflow gives more detail on additional inputs and how they are formatted. By clicking on the blue button on the inject node, you will send a message to the ROC and the response will be displayed in the debug tab. For read requests, the values requested will be the first output of the subflow node. For writes, a message indicating the write was successful will be the first output. If there is a CRC error or opcode error, it will be sent out the second output of the subflow.
 
 **Any flow using these drivers must load the dataTypes.csv file on startup. The example includes the code to do this as the top line/wire. This must not be removed.**
