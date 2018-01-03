@@ -1,3 +1,12 @@
+//v0.1.0 2018-01-03
+//Copy entire file to clipboard. In the Node-RED menu, select "Import">"Clipboard" and paste the code into the window.
+//Choose whether you want it to be included in the current flow or as a new one. Click "Import" and the flow will appear.
+//Change values in the various inject nodes to suit your purposes. The host IP address will need to be changed at the very least.
+//By default, IP-capable ROCs (ROC800 and FB107 with ECM Module installed) use IP Port 4000 for ROC Protocol.
+//DeviceGroup and DeviceAddress are defaulted to 240, which will work with any device's LOI port and can cause errors if there are multiple devices connected. Change this to match the ROC's Group and Address.
+//In order for the drivers to know the datatype of different TLP's, a file must be loaded onto the device running the drivers and loaded into the Node-RED flow at startup. This file is called dataTypes.csv and the path containing the file must be entered into the file in node manually. dataTypes.csv can be found in the node-red-contrib-roc main directory on github.
+
+
 [
     {
         "id": "8debf4ec.a602b8",
