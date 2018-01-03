@@ -1,0 +1,2184 @@
+//v0.1.0 2018-01-03
+//Copy entire file to clipboard. In the Node-RED menu, select "Import">"Clipboard" and paste the code into the window.
+//Choose whether you want it to be included in the current flow or as a new one. Click "Import" and the flow will appear.
+//Change values in the various inject nodes to suit your purposes. The host IP address will need to be changed at the very least.
+//By default, IP-capable ROCs (ROC800 and FB107 with ECM Module installed) use IP Port 4000 for ROC Protocol.
+//DeviceGroup and DeviceAddress are defaulted to 240, which will work with any device's LOI port and can cause errors if there are multiple devices connected. Change this to match the ROC's Group and Address.
+//In order for the drivers to know the datatype of different TLP's, a file must be loaded onto the device running the drivers and loaded into the Node-RED flow at startup. This file is called dataTypes.csv and the path containing the file must be entered into the file in node manually. dataTypes.csv can be found in the node-red-contrib-roc main directory on github.
+
+
+[
+    {
+        "id": "8debf4ec.a602b8",
+        "type": "subflow",
+        "name": "Opcode 11 - Set multiple Opcode Table Values",
+        "info": "Writes values to TLP's specified in the opcode table. In order to parse the \nvalues to be written, the application must know the types of data stored in the\nTLP's pointed to by the opcode table. If there has not already been a request\nfor data from the table requested, the application will first load in the TLP\npointers from the opcode table before requesting the pointed-to data. If there\nhas already been a request for data from the same table, the TLP loading is not \nperformed. If there has been a change to the opcode table in the device, the\nNode-Red application must be restarted to clear the stored TLP pointers.\n\nInput: \ndevice group number as msg.payload.deviceGroup\ndevice address as msg.payload.deviceAddress\nIP Address as msg.payload.host\nIP Port as msg.payload.port\nopcode table number as msg.payload.table\nstarting opcode table entry as msg.payload.start\nvalues to be written as msg.payload.values. Must be an array.\n\nOutput 1: String \"Success\" if successful\nOutput 2: CRC or Opcode errors, if present\n",
+        "in": [
+            {
+                "x": 140,
+                "y": 860,
+                "wires": [
+                    {
+                        "id": "253128b5.2938d8"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1540,
+                "y": 820,
+                "wires": [
+                    {
+                        "id": "93e6d108.8e918",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1540,
+                "y": 880,
+                "wires": [
+                    {
+                        "id": "5f1f0995.9ba7b8",
+                        "port": 1
+                    },
+                    {
+                        "id": "ac75b240.406c3",
+                        "port": 1
+                    },
+                    {
+                        "id": "5d6f3938.be6648",
+                        "port": 1
+                    },
+                    {
+                        "id": "24222200.f5316e",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "19e6b7dc.c4dbd8",
+        "type": "tcp request",
+        "z": "8debf4ec.a602b8",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "",
+        "x": 770,
+        "y": 860,
+        "wires": [
+            [
+                "ac75b240.406c3"
+            ]
+        ]
+    },
+    {
+        "id": "253128b5.2938d8",
+        "type": "function",
+        "z": "8debf4ec.a602b8",
+        "name": "Check for pointer values",
+        "func": "\nif (!global.get('Opcode'+(msg.payload.table))){\n    var request = msg.payload;\n    global.set(\"request\", request);\n    msg.host = msg.payload.host;\n    msg.port = msg.payload.port;\n\n    msg.payload = Buffer.from([\n        msg.payload.deviceGroup,\n        msg.payload.deviceAddress,\n        3,\n        1,\n        167,\n        4,\n        0,\n        0,\n        45,\n        0]);\n    \n    return [null, msg];\n}\n\nelse{\n    var dataBytes = Buffer.from([]);\n    if (global.get(\"request\")){\n        msg.payload=global.get(\"request\");\n        global.set(\"request\",null);\n\n    }\n    msg.host = msg.payload.host;\n    msg.port = msg.payload.port;\n    var start = msg.payload.start-1;\n    var numParams = msg.payload.values.length;\n    var pointers = global.get(\"Opcode\"+msg.payload.table);\n    var valueIndex = 0;\n    for (var i=start+1; i<start+numParams+1; i++){\n        var lookup = pointers[i][0]+\"_\"+pointers[i][2];\n        var sizeAndType = global.get(lookup);\n        var valueBuffer = valueToBuffer(\n            msg.payload.values[valueIndex], sizeAndType[0]);\n        dataBytes = Buffer.concat([dataBytes,valueBuffer]);\n        valueIndex++;\n    }\n    \n    msg.payload=Buffer.from([\n        msg.payload.deviceGroup,\n        msg.payload.deviceAddress,\n        3,\n        1,\n        11,\n        dataBytes.length+3,\n        msg.payload.table-1,\n        start,\n        numParams]);\n        \n    msg.payload=Buffer.concat([msg.payload, dataBytes]);    \n    \n    return [msg, null];\n}\n\n/*\nvar tl=Buffer.from([msg.payload.tlp[0], msg.payload.tlp[1]]);\nvar startParam = Buffer.from([msg.payload.tlp[2]]);\nvar numParams = Buffer.from([msg.payload.numParams]);\nvar values = Buffer.from([]);\n\nfor (i=0; i<msg.payload.numParams; i++){\n    var lookup=msg.payload.tlp[0]+\"_\"+(msg.payload.tlp[2]+i);\n    var sizeAndType = global.get(lookup);\n    values = Buffer.concat([\n        values, \n        valueToBuffer(msg.payload.values[i],sizeAndType[0])]);\n    node.warn(values);\n}\n\nvar dataBytes = Buffer.from([values.length+4]);\n\nmsg.payload = Buffer.from([\n    msg.payload.deviceGroup,\n    msg.payload.deviceAddress,\n    3,\n    1,\n    166]);\nmsg.payload = Buffer.concat([\n    msg.payload,\n    dataBytes,\n    tl,\n    numParams,\n    startParam,\n    values]);\n\nreturn msg;\n*/\nfunction valueToBuffer(value, dataType){\n    var buf;\n    switch(dataType){\n        case 'BIN':\n            return Buffer.from([number]);\n        case 'AC':\n            return buf.write(value);\n        case 'INT8':\n            buf = Buffer.allocUnsafe(1);\n            return buf.writeInt8(value,0);\n        case 'INT16':\n            buf = Buffer.allocUnsafe(2);\n            return buf.writeInt16LE(value,0);\n        case 'INT32':\n            buf = Buffer.allocUnsafe(4);\n            return buf.writeInt32LE(value,0);\n        case 'UINT8':\n            buf = Buffer.allocUnsafe(1);\n            return buf.writeUInt8(value,0);\n        case 'UINT16':\n            buf = Buffer.allocUnsafe(2);\n            return buf.writeUInt16LE(value,0);\n        case 'UINT32':\n            buf = Buffer.allocUnsafe(4);\n            return buf.writeUInt32LE(value,0);\n        case 'FL':\n        case 'FLOAT':\n            buf = Buffer.allocUnsafe(4);\n            buf.writeFloatLE(value,0);\n            return buf;\n        case 'DBL':\n        case 'DOUBLE':\n            buf = Buffer.allocUnsafe(8);\n            return buf.writeDoubleLE(value,0);\n        case 'TLP':\n            return Buffer.from([number]);\n        case 'TIME':\n            return Buffer.from([number]);\n        case 'DT6':\n            return Buffer.from([number]);\n        default:\n            return \"Data Type Not Recognized\";\n    }\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 370,
+        "y": 860,
+        "wires": [
+            [
+                "cfbaab7e.e9e368"
+            ],
+            [
+                "431bf959.f180f8"
+            ]
+        ]
+    },
+    {
+        "id": "cfbaab7e.e9e368",
+        "type": "function",
+        "z": "8debf4ec.a602b8",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 620,
+        "y": 860,
+        "wires": [
+            [
+                "19e6b7dc.c4dbd8"
+            ]
+        ]
+    },
+    {
+        "id": "5f1f0995.9ba7b8",
+        "type": "function",
+        "z": "8debf4ec.a602b8",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1110,
+        "y": 820,
+        "wires": [
+            [
+                "93e6d108.8e918"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "ac75b240.406c3",
+        "type": "function",
+        "z": "8debf4ec.a602b8",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 950,
+        "y": 860,
+        "wires": [
+            [
+                "5f1f0995.9ba7b8"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "431bf959.f180f8",
+        "type": "function",
+        "z": "8debf4ec.a602b8",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 540,
+        "y": 940,
+        "wires": [
+            [
+                "6936df4c.fd9a2"
+            ]
+        ]
+    },
+    {
+        "id": "6936df4c.fd9a2",
+        "type": "tcp request",
+        "z": "8debf4ec.a602b8",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "",
+        "x": 690,
+        "y": 940,
+        "wires": [
+            [
+                "24222200.f5316e"
+            ]
+        ]
+    },
+    {
+        "id": "24222200.f5316e",
+        "type": "function",
+        "z": "8debf4ec.a602b8",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 870,
+        "y": 940,
+        "wires": [
+            [
+                "5d6f3938.be6648"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "5d6f3938.be6648",
+        "type": "function",
+        "z": "8debf4ec.a602b8",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1030,
+        "y": 1000,
+        "wires": [
+            [
+                "151ae9c0.b62ca6"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "151ae9c0.b62ca6",
+        "type": "function",
+        "z": "8debf4ec.a602b8",
+        "name": "Load Opcode pointer table",
+        "func": "var numParams=msg.payload[8];\nvar tableID = \"Opcode\"+(msg.payload[7]+1);\nvar pointers = [];\n\nfor (var i=1; i<45; i++){\n    pointers[i]=[\n        msg.payload[i*3+11],\n        msg.payload[i*3+12],\n        msg.payload[i*3+13],\n        ];\n}\nglobal.set(tableID, pointers);\n\nmsg.payload = {\"table\":1};\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1160,
+        "y": 1080,
+        "wires": [
+            [
+                "253128b5.2938d8"
+            ]
+        ]
+    },
+    {
+        "id": "93e6d108.8e918",
+        "type": "function",
+        "z": "8debf4ec.a602b8",
+        "name": "Result",
+        "func": "msg.payload = {payload:\"Success\"};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1270,
+        "y": 780,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "77b38840.322018",
+        "type": "subflow",
+        "name": "Opcode 10 - Request Opcode Table Data",
+        "info": "Requests opcode table data from the device. In order to parse the returned data,\nthe application must know the types of data stored in the TLP's pointed to by\nthe opcode table. If there has not already been a request for data from the\ntable requested, the application will first load in the TLP pointers from the\nopcode table before requesting the pointed-to data. If there has already been a \nrequest for data from the same table, the TLP loading is not performed. If there\nhas been a change to the opcode table in the device, the Node-Red application\nmust be restarted to clear the stored TLP pointers.\n\nInput: \ndevice group number as msg.payload.deviceGroup\ndevice address as msg.payload.deviceAddress\nIP Address as msg.payload.host\nIP Port as msg.payload.port\nopcode table number as msg.payload.table\nstarting opcode table entry as msg.payload.star\nnumber of parameters requested as msg.payload.params\n\nOutput 1: Array of values pointed to by the opcode table entries requested\nOutput 2: CRC or Opcode errors, if present\n",
+        "in": [
+            {
+                "x": 260,
+                "y": 320,
+                "wires": [
+                    {
+                        "id": "413ea026.68e19"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1500,
+                "y": 200,
+                "wires": [
+                    {
+                        "id": "757de95d.b0d688",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1560,
+                "y": 460,
+                "wires": [
+                    {
+                        "id": "b8127471.0707e8",
+                        "port": 1
+                    },
+                    {
+                        "id": "59f21b2a.e734b4",
+                        "port": 1
+                    },
+                    {
+                        "id": "6dce52c0.17ab7c",
+                        "port": 1
+                    },
+                    {
+                        "id": "3ad43369.dff39c",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "d49a38f5.c01988",
+        "type": "tcp request",
+        "z": "77b38840.322018",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "",
+        "x": 830,
+        "y": 320,
+        "wires": [
+            [
+                "59f21b2a.e734b4"
+            ]
+        ]
+    },
+    {
+        "id": "413ea026.68e19",
+        "type": "function",
+        "z": "77b38840.322018",
+        "name": "Check for pointer values",
+        "func": "msg.host = msg.payload.host;\nmsg.port = msg.payload.port;\n\nif (!global.get('Opcode'+(msg.payload.table))){\n    var request = Buffer.from([\n        msg.payload.deviceGroup,\n        msg.payload.deviceAddress,\n        3,\n        1,\n        10,\n        3,\n        msg.payload.table-1,\n        msg.payload.start-1,\n        msg.payload.params]);\n    global.set(\"request\", request);\n    msg.payload = Buffer.from([\n        msg.payload.deviceGroup,\n        msg.payload.deviceAddress,\n        3,\n        1,\n        167,\n        4,\n        0,\n        msg.payload.table-1,\n        45,\n        0]);\n    \n    return [null, msg];\n}\n\nelse{\n    if (global.get(\"request\")){\n        msg.payload=global.get(\"request\");\n        global.set(\"request\",null);\n    }\n    else {\n        msg.payload = Buffer.from([\n            msg.payload.deviceGroup,\n            msg.payload.deviceAddress,\n            3,\n            1,\n            10,\n            3,\n            msg.payload.table-1,\n            msg.payload.start-1,\n            msg.payload.params]);\n        }\n    return [msg, null];\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 450,
+        "y": 320,
+        "wires": [
+            [
+                "3ae9b686.3d473a"
+            ],
+            [
+                "e5291041.cd21e"
+            ]
+        ]
+    },
+    {
+        "id": "3ae9b686.3d473a",
+        "type": "function",
+        "z": "77b38840.322018",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 680,
+        "y": 320,
+        "wires": [
+            [
+                "d49a38f5.c01988"
+            ]
+        ]
+    },
+    {
+        "id": "b8127471.0707e8",
+        "type": "function",
+        "z": "77b38840.322018",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1150,
+        "y": 260,
+        "wires": [
+            [
+                "757de95d.b0d688"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "59f21b2a.e734b4",
+        "type": "function",
+        "z": "77b38840.322018",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1110,
+        "y": 320,
+        "wires": [
+            [
+                "b8127471.0707e8"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "e5291041.cd21e",
+        "type": "function",
+        "z": "77b38840.322018",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 140,
+        "y": 460,
+        "wires": [
+            [
+                "e86b21b9.37198"
+            ]
+        ]
+    },
+    {
+        "id": "e86b21b9.37198",
+        "type": "tcp request",
+        "z": "77b38840.322018",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "",
+        "x": 310,
+        "y": 460,
+        "wires": [
+            [
+                "3ad43369.dff39c"
+            ]
+        ]
+    },
+    {
+        "id": "3ad43369.dff39c",
+        "type": "function",
+        "z": "77b38840.322018",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 590,
+        "y": 460,
+        "wires": [
+            [
+                "6dce52c0.17ab7c"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "6dce52c0.17ab7c",
+        "type": "function",
+        "z": "77b38840.322018",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 770,
+        "y": 440,
+        "wires": [
+            [
+                "a4fbe0e8.10c3f"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "a4fbe0e8.10c3f",
+        "type": "function",
+        "z": "77b38840.322018",
+        "name": "Load Opcode pointer table",
+        "func": "var numParams=msg.payload[8];\nvar tableID = \"Opcode\"+(msg.payload[7]+1);\nvar pointers = [];\n\nfor (var i=1; i<45; i++){\n    pointers[i]=[\n        msg.payload[i*3+11],\n        msg.payload[i*3+12],\n        msg.payload[i*3+13],\n        ];\n}\nglobal.set(tableID, pointers);\n\nmsg.payload = {\"table\":1};\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 980,
+        "y": 420,
+        "wires": [
+            [
+                "413ea026.68e19"
+            ]
+        ]
+    },
+    {
+        "id": "757de95d.b0d688",
+        "type": "function",
+        "z": "77b38840.322018",
+        "name": "Opcode 10 Parse Results",
+        "func": "var numParams=msg.payload[8];\nvar result=[];\nvar type;\nvar parameter=msg.payload[7];\nvar index = 13;\nvar pointers = global.get(\"Opcode\"+(msg.payload[6]+1));\nfor (var i=parameter; i<parameter+numParams; i++){\n    \n    var tlp = pointers[i+1];\n    var lookup = tlp[0]+'_'+tlp[2];\n    var typeAndSize = global.get(lookup);\n    \n    var dataBytes = msg.payload.slice(index,index+typeAndSize[1]);\n    index += typeAndSize[1];\n    result[i]=parse(dataBytes,typeAndSize);\n}\n\nmsg.payload = result;\n\nreturn msg;\n\nfunction parse(data, info){\n    buffer = Buffer.from(data);\n    switch(info[0]){\n        case 'BIN':\n            return buffer;\n            \n        case 'AC':\n            return String(buffer);\n        \n        case 'INT8':\n        case 'INT16':\n        case 'INT32':\n            return buffer.readIntLE(0,info[1]);\n        \n        case 'UINT8':\n        case 'UINT16':\n        case 'UINT32':\n            return buffer.readUIntLE(0,info[1]);\n            \n        case 'FL':\n        case 'FLOAT':\n            return Math.round(buffer.readFloatLE(0)*100000)/100000;\n            \n        case 'DBL':\n        case 'DOUBLE':\n            return buffer.readDoubleLE(0);\n            \n        case 'TLP':\n            return data;\n            \n        case 'TIME':\n            return new Date(buffer.readUIntBE(0,4));\n            \n        case 'DT6':\n            return data;\n        \n        default:\n            return \"Data Type Not Recognized\";\n    }\n}",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1210,
+        "y": 200,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "2dc0e633.bddc6a",
+        "type": "subflow",
+        "name": "Opcode 181 - Set multiple TLP's",
+        "info": "Writes one or more parameters (TLP's) to the device\n\nInput: \ndevice group number as msg.payload.deviceGroup\ndevice address as msg.payload.deviceAddress\nIP Address as msg.payload.host\nIP Port as msg.payload.port\nTLP's and new values as msg.payload.tlps. Should be formatted as an array of\narrays, where each member array contains four elements, formatted as \n[T, L, P, value]\n \nOutput 1: String \"Successful\" after successful write\nOutput 2: CRC or Opcode errors, if present\n",
+        "in": [
+            {
+                "x": 200,
+                "y": 840,
+                "wires": [
+                    {
+                        "id": "a7d3eb52.39b078"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1320,
+                "y": 760,
+                "wires": [
+                    {
+                        "id": "217ea986.ec96e6",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1320,
+                "y": 840,
+                "wires": [
+                    {
+                        "id": "7c47b2ec.1f83ec",
+                        "port": 1
+                    },
+                    {
+                        "id": "4b4d826c.4893bc",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "a7d3eb52.39b078",
+        "type": "function",
+        "z": "2dc0e633.bddc6a",
+        "name": "Opcode 181 - Write TLP's",
+        "func": "msg.host = msg.payload.host;\nmsg.port = msg.payload.port;\n\nvar writes = Buffer.from([]);\nvar numParams = msg.payload.tlps.length;\n\nfor (var i=0; i<numParams; i++){\n    var tlp = Buffer.from(msg.payload.tlps[i].slice(0,3));\n    var lookup=msg.payload.tlps[i][0]+'_'+msg.payload.tlps[i][2];\n    var sizeAndType = global.get(lookup);\n    var value = valueToBuffer(msg.payload.tlps[i][3], sizeAndType[0]);\n    writes=Buffer.concat([writes,tlp,value]);\n}\n\nvar dataBytes = Buffer.from([writes.length+1]);\nmsg.payload = Buffer.from([\n    msg.payload.deviceGroup,\n    msg.payload.deviceAddress,\n    3,\n    1,\n    181]);\n    \nmsg.payload=Buffer.concat([\n    msg.payload,\n    dataBytes,\n    Buffer.from([numParams]),\n    writes]);\n\nreturn msg;\n\nfunction valueToBuffer(value, dataType){\n    var buf;\n    switch(dataType){\n        case 'BIN':\n            return Buffer.from([number]);\n        case 'AC':\n            return buf.write(value);\n        case 'INT8':\n            buf = Buffer.allocUnsafe(1);\n            return buf.writeInt8(value,0);\n        case 'INT16':\n            buf = Buffer.allocUnsafe(2);\n            return buf.writeInt16LE(value,0);\n        case 'INT32':\n            buf = Buffer.allocUnsafe(4);\n            return buf.writeInt32LE(value,0);\n        case 'UINT8':\n            buf = Buffer.allocUnsafe(1);\n            return buf.writeUInt8(value,0);\n        case 'UINT16':\n            buf = Buffer.allocUnsafe(2);\n            return buf.writeUInt16LE(value,0);\n        case 'UINT32':\n            buf = Buffer.allocUnsafe(4);\n            return buf.writeUInt32LE(value,0);\n        case 'FL':\n        case 'FLOAT':\n            buf = Buffer.allocUnsafe(4);\n            buf.writeFloatLE(value,0);\n            return buf;\n        case 'DBL':\n        case 'DOUBLE':\n            buf = Buffer.allocUnsafe(8);\n            return buf.writeDoubleLE(value,0);\n        case 'TLP':\n            return Buffer.from([number]);\n        case 'TIME':\n            return Buffer.from([number]);\n        case 'DT6':\n            return Buffer.from([number]);\n        default:\n            return \"Data Type Not Recognized\";\n    }\n}\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 370,
+        "y": 840,
+        "wires": [
+            [
+                "44b753f1.fdb12c"
+            ]
+        ]
+    },
+    {
+        "id": "44b753f1.fdb12c",
+        "type": "function",
+        "z": "2dc0e633.bddc6a",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 580,
+        "y": 840,
+        "wires": [
+            [
+                "5bb1a265.ed1e1c"
+            ]
+        ]
+    },
+    {
+        "id": "5bb1a265.ed1e1c",
+        "type": "tcp request",
+        "z": "2dc0e633.bddc6a",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "",
+        "x": 730,
+        "y": 840,
+        "wires": [
+            [
+                "4b4d826c.4893bc"
+            ]
+        ]
+    },
+    {
+        "id": "7c47b2ec.1f83ec",
+        "type": "function",
+        "z": "2dc0e633.bddc6a",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1050,
+        "y": 800,
+        "wires": [
+            [
+                "217ea986.ec96e6"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "4b4d826c.4893bc",
+        "type": "function",
+        "z": "2dc0e633.bddc6a",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 890,
+        "y": 840,
+        "wires": [
+            [
+                "7c47b2ec.1f83ec"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "217ea986.ec96e6",
+        "type": "function",
+        "z": "2dc0e633.bddc6a",
+        "name": "Result",
+        "func": "msg.payload = {payload:\"Success\"};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1190,
+        "y": 760,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "a71e311.7991dd",
+        "type": "subflow",
+        "name": "Opcode 166 - Set multiple parameters in single point",
+        "info": "Writes a block of parameters\n\nInput: \ndevice group number as msg.payload.deviceGroup\ndevice address as msg.payload.deviceAddress\nIP Address as msg.payload.host\nIP Port as msg.payload.port\nTLP to begin writing at write as msg.payload.body.tlp\nnumber of parameters to write as msg.payload.body.numParams\nvalues to be written as msg.payload.body.value, formatted as an array\n\nOutput 1: The string \"Success\" is successful\nOutput 2: Any CRC or Opcode errors, if present\n",
+        "in": [
+            {
+                "x": 40,
+                "y": 760,
+                "wires": [
+                    {
+                        "id": "fa2c66fa.61b7b8"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1340,
+                "y": 680,
+                "wires": [
+                    {
+                        "id": "65b5a7f3.c28098",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1340,
+                "y": 760,
+                "wires": [
+                    {
+                        "id": "74c9d1ef.d1c1a",
+                        "port": 1
+                    },
+                    {
+                        "id": "33a3a57d.b354ea",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "fa2c66fa.61b7b8",
+        "type": "function",
+        "z": "a71e311.7991dd",
+        "name": "Opcode 166 - Set multiple parameters in single point",
+        "func": "//unfinished. Need to format values\n\nmsg.host = msg.payload.host;\nmsg.port = msg.payload.port;\n\nvar tl=Buffer.from([msg.payload.tlp[0], msg.payload.tlp[1]]);\nvar startParam = Buffer.from([msg.payload.tlp[2]]);\nvar numParams = Buffer.from([msg.payload.numParams]);\nvar values = Buffer.from([]);\n\nfor (i=0; i<msg.payload.numParams; i++){\n    var lookup=msg.payload.tlp[0]+\"_\"+(msg.payload.tlp[2]+i);\n    var sizeAndType = global.get(lookup);\n    values = Buffer.concat([\n        values, \n        valueToBuffer(msg.payload.values[i],sizeAndType[0])]);\n}\n\nvar dataBytes = Buffer.from([values.length+4]);\n\nmsg.payload = Buffer.from([\n    msg.payload.deviceGroup,\n    msg.payload.deviceAddress,\n    3,\n    1,\n    166]);\nmsg.payload = Buffer.concat([\n    msg.payload,\n    dataBytes,\n    tl,\n    numParams,\n    startParam,\n    values]);\n\nreturn msg;\n\nfunction valueToBuffer(value, dataType){\n    var buf;\n    switch(dataType){\n        case 'BIN':\n            return Buffer.from([number]);\n        case 'AC':\n            return buf.write(value);\n        case 'INT8':\n            buf = Buffer.allocUnsafe(1);\n            return buf.writeInt8(value,0);\n        case 'INT16':\n            buf = Buffer.allocUnsafe(2);\n            return buf.writeInt16LE(value,0);\n        case 'INT32':\n            buf = Buffer.allocUnsafe(4);\n            return buf.writeInt32LE(value,0);\n        case 'UINT8':\n            buf = Buffer.allocUnsafe(1);\n            return buf.writeUInt8(value,0);\n        case 'UINT16':\n            buf = Buffer.allocUnsafe(2);\n            return buf.writeUInt16LE(value,0);\n        case 'UINT32':\n            buf = Buffer.allocUnsafe(4);\n            return buf.writeUInt32LE(value,0);\n        case 'FL':\n        case 'FLOAT':\n            buf = Buffer.allocUnsafe(4);\n            buf.writeFloatLE(value,0);\n            return buf;\n        case 'DBL':\n        case 'DOUBLE':\n            buf = Buffer.allocUnsafe(8);\n            return buf.writeDoubleLE(value,0);\n        case 'TLP':\n            return Buffer.from([number]);\n        case 'TIME':\n            return Buffer.from([number]);\n        case 'DT6':\n            return Buffer.from([number]);\n        default:\n            return \"Data Type Not Recognized\";\n    }\n}\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 320,
+        "y": 760,
+        "wires": [
+            [
+                "46696a4b.3ddc34"
+            ]
+        ]
+    },
+    {
+        "id": "46696a4b.3ddc34",
+        "type": "function",
+        "z": "a71e311.7991dd",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 620,
+        "y": 760,
+        "wires": [
+            [
+                "e0dbb066.c734b"
+            ]
+        ]
+    },
+    {
+        "id": "65b5a7f3.c28098",
+        "type": "function",
+        "z": "a71e311.7991dd",
+        "name": "Result",
+        "func": "msg.payload = {payload:\"Success\"};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1210,
+        "y": 680,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "e0dbb066.c734b",
+        "type": "tcp request",
+        "z": "a71e311.7991dd",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "",
+        "x": 770,
+        "y": 760,
+        "wires": [
+            [
+                "33a3a57d.b354ea"
+            ]
+        ]
+    },
+    {
+        "id": "33a3a57d.b354ea",
+        "type": "function",
+        "z": "a71e311.7991dd",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1070,
+        "y": 760,
+        "wires": [
+            [
+                "74c9d1ef.d1c1a"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "74c9d1ef.d1c1a",
+        "type": "function",
+        "z": "a71e311.7991dd",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1130,
+        "y": 720,
+        "wires": [
+            [
+                "65b5a7f3.c28098"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "ecbfba54.279a58",
+        "type": "subflow",
+        "name": "Get Device Type",
+        "info": "Determines type of device connected\n\nInput: \ndevice group number as msg.payload.deviceGroup\ndevice address as msg.payload.deviceAddress\nIP Address as msg.payload.host\nIP Port as msg.payload.port\n\nOutput:\n2-Element array. The first element is a code representing the device type as\ndescribed below. The second element is a string describing the device.\n\nCode corresponsing to the reported device type\n1: ROC300-Series with ROCPAC\n2: FloBoss 407\n3: ROC300-Series with FlashPAC\n4: FloBoss 107, 103, or 503\n5: FloBoss 504\n6: ROC800\n11: DL8000\n\n",
+        "in": [
+            {
+                "x": 160,
+                "y": 620,
+                "wires": [
+                    {
+                        "id": "361cf0ee.27d13"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1340,
+                "y": 520,
+                "wires": [
+                    {
+                        "id": "935b286d.000f08",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1340,
+                "y": 620,
+                "wires": [
+                    {
+                        "id": "44234f9f.b3fc9",
+                        "port": 1
+                    },
+                    {
+                        "id": "e7212303.34c2f",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "de8a52b9.cf4ea",
+        "type": "function",
+        "z": "ecbfba54.279a58",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 520,
+        "y": 620,
+        "wires": [
+            [
+                "249f745e.f72cdc"
+            ]
+        ]
+    },
+    {
+        "id": "249f745e.f72cdc",
+        "type": "tcp request",
+        "z": "ecbfba54.279a58",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "",
+        "x": 670,
+        "y": 620,
+        "wires": [
+            [
+                "e7212303.34c2f",
+                "11949330.ce1f8d"
+            ]
+        ]
+    },
+    {
+        "id": "44234f9f.b3fc9",
+        "type": "function",
+        "z": "ecbfba54.279a58",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1050,
+        "y": 580,
+        "wires": [
+            [
+                "935b286d.000f08"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "e7212303.34c2f",
+        "type": "function",
+        "z": "ecbfba54.279a58",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 850,
+        "y": 620,
+        "wires": [
+            [
+                "44234f9f.b3fc9"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "935b286d.000f08",
+        "type": "function",
+        "z": "ecbfba54.279a58",
+        "name": "Result",
+        "func": "/*\n1: ROC300-Series with ROCPAC\n2: FloBoss 407\n3: ROC300-Series with FlashPAC\n4: FloBoss 107, 103, or 503\n5: FloBoss 504\n6: ROC800\n11: DL8000\n*/\nvar type = msg.payload[24];\nvar description;\n\nswitch(type) {\n    case 1:\n        description = \"ROC300-Series with ROCPAC\";\n        break;\n    case 2:\n        description = \"FloBoss 407\";\n        break;\n    case 3:\n        description = \"ROC300-Series with FlashPAC\";\n        break;\n    case 4:\n        description = \"FloBoss 107, 103, or 503\";\n        break;\n    case 5:\n        description = \"FloBoss 504\";\n        break;\n    case 6:\n        description = \"ROC800-Series\";\n        break;\n    case 11:\n        description = \"DL8000\";\n        break;\n    default:\n        description = \"Unknown device type\";\n}\n\nreturn {\"payload\":[type, description]};",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1210,
+        "y": 520,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "361cf0ee.27d13",
+        "type": "function",
+        "z": "ecbfba54.279a58",
+        "name": "Get Device Type",
+        "func": "msg.host= msg.payload.host;\nmsg.port = msg.payload.port;\nmsg.payload = Buffer.from([msg.payload.deviceGroup,msg.payload.deviceAddress,3,1,6,0]);\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 330,
+        "y": 620,
+        "wires": [
+            [
+                "de8a52b9.cf4ea"
+            ]
+        ]
+    },
+    {
+        "id": "11949330.ce1f8d",
+        "type": "debug",
+        "z": "ecbfba54.279a58",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1020,
+        "y": 720,
+        "wires": []
+    },
+    {
+        "id": "6990bd0e.c0c8d4",
+        "type": "subflow",
+        "name": "Opcode 162 - Write single TLP (ROC300 and FB407 only)",
+        "info": "Writes a single parameter\n\nInput: \ndevice group number as msg.payload.deviceGroup\ndevice address as msg.payload.deviceAddress\nTLP to write as msg.payload.tlp\nvalue to be written as msg.payload.value\n\nOutput:\nOutput 1: The string \"Success\" if successful\nOutput 2: Errors, if present\n\nCompatible with ROC300-Series and FloBoss 407 only. Not for FB107 or ROC800.\n",
+        "in": [
+            {
+                "x": 240,
+                "y": 560,
+                "wires": [
+                    {
+                        "id": "fb7cf7d6.bc6398"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1440,
+                "y": 500,
+                "wires": [
+                    {
+                        "id": "b94ae42e.15dce8",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1300,
+                "y": 580,
+                "wires": [
+                    {
+                        "id": "76a19ee2.8a799",
+                        "port": 1
+                    },
+                    {
+                        "id": "34ce6a8a.0c77f6",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "fb7cf7d6.bc6398",
+        "type": "function",
+        "z": "6990bd0e.c0c8d4",
+        "name": "Opcode 162 - Set single parameter",
+        "func": "msg.host = msg.payload.host;\nmsg.port = msg.payload.port;\nvar tlp = Buffer.from(msg.payload.tlp);\nvar typeAndSize = global.get(msg.payload.tlp[0]+'_'+msg.payload.tlp[2]);\nvar value = valueToBuffer(msg.payload.value, typeAndSize[0]);\nvar dataBytes = Buffer.from([typeAndSize[1]]);\nmsg.payload = Buffer.from([msg.payload.deviceGroup,msg.payload.deviceAddress,3,1,162]);\nmsg.payload = Buffer.concat([msg.payload, dataBytes, tlp, value]);\n\nreturn msg;\n\nfunction valueToBuffer(value, dataType){\n    var buf;\n    switch(dataType){\n        case 'BIN':\n            return Buffer.from([number]);\n        case 'AC':\n            return buf.write(value);\n        case 'INT8':\n            buf = Buffer.allocUnsafe(1);\n            return buf.writeInt8(value,0);\n        case 'INT16':\n            buf = Buffer.allocUnsafe(2);\n            return buf.writeInt16LE(value,0);\n        case 'INT32':\n            buf = Buffer.allocUnsafe(4);\n            return buf.writeInt32LE(value,0);\n        case 'UINT8':\n            buf = Buffer.allocUnsafe(1);\n            return buf.writeUInt8(value,0);\n        case 'UINT16':\n            buf = Buffer.allocUnsafe(2);\n            return buf.writeUInt16LE(value,0);\n        case 'UINT32':\n            buf = Buffer.allocUnsafe(4);\n            return buf.writeUInt32LE(value,0);\n        case 'FL':\n        case 'FLOAT':\n            buf = Buffer.allocUnsafe(4);\n            buf.writeFloatLE(value,0);\n            return buf;\n        case 'DBL':\n        case 'DOUBLE':\n            buf = Buffer.allocUnsafe(8);\n            return buf.writeDoubleLE(value,0);\n        case 'TLP':\n            return Buffer.from([number]);\n        case 'TIME':\n            return Buffer.from([number]);\n        case 'DT6':\n            return Buffer.from([number]);\n        default:\n            return \"Data Type Not Recognized\";\n    }\n}\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 460,
+        "y": 560,
+        "wires": [
+            [
+                "4913e374.d8095c"
+            ]
+        ]
+    },
+    {
+        "id": "4913e374.d8095c",
+        "type": "function",
+        "z": "6990bd0e.c0c8d4",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 700,
+        "y": 560,
+        "wires": [
+            [
+                "b00e4e91.f13d4"
+            ]
+        ]
+    },
+    {
+        "id": "b00e4e91.f13d4",
+        "type": "tcp request",
+        "z": "6990bd0e.c0c8d4",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "",
+        "x": 830,
+        "y": 560,
+        "wires": [
+            [
+                "34ce6a8a.0c77f6"
+            ]
+        ]
+    },
+    {
+        "id": "34ce6a8a.0c77f6",
+        "type": "function",
+        "z": "6990bd0e.c0c8d4",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 970,
+        "y": 560,
+        "wires": [
+            [
+                "76a19ee2.8a799"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "76a19ee2.8a799",
+        "type": "function",
+        "z": "6990bd0e.c0c8d4",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request \"+msg.payload}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1150,
+        "y": 540,
+        "wires": [
+            [
+                "b94ae42e.15dce8"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "b94ae42e.15dce8",
+        "type": "function",
+        "z": "6990bd0e.c0c8d4",
+        "name": "Result",
+        "func": "msg.payload = {payload:\"Success\"};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1310,
+        "y": 500,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "254715fb.bf07ea",
+        "type": "subflow",
+        "name": "Opcode 167 - Read multiple parameters within single point",
+        "info": "Requests a block of parameters for a single point\n\nInput: \ndevice group number as msg.payload.deviceGroup\ndevice address as msg.payload.deviceAddress\nIP Address as msg.payload.host\nIP Port as msg.payload.port\n\nFirst TLP requested as msg.payload.tlp, formatted as a 3-element array [T,L,P]\nNumber of parameters requested as msg.payload.params\n\nOutput:\nArray of values corresponding to the parameters requested\n",
+        "in": [
+            {
+                "x": 160,
+                "y": 400,
+                "wires": [
+                    {
+                        "id": "2eda5e7d.8570f2"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1540,
+                "y": 380,
+                "wires": [
+                    {
+                        "id": "10b9f4c4.589cab",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1340,
+                "y": 420,
+                "wires": [
+                    {
+                        "id": "530c03b1.8a8e3c",
+                        "port": 1
+                    },
+                    {
+                        "id": "38dea9a6.01cc86",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "2eda5e7d.8570f2",
+        "type": "function",
+        "z": "254715fb.bf07ea",
+        "name": "Opcode 167 - Read single point",
+        "func": "msg.host = msg.payload.host;\nmsg.port = msg.payload.port;\n\nvar tl=Buffer.from([msg.payload.tlp[0],msg.payload.tlp[1]]);\nvar numParams = Buffer.from([msg.payload.params]);\nvar startParam = Buffer.from([msg.payload.tlp[2]]);\nvar dataBytes = Buffer.from([4]);\nmsg.payload = Buffer.from([msg.payload.deviceGroup,msg.payload.deviceAddress,3,1,167]);\nmsg.payload=Buffer.concat([msg.payload, dataBytes, tl, numParams, startParam]);\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 370,
+        "y": 400,
+        "wires": [
+            [
+                "e0204c2b.a443e"
+            ]
+        ]
+    },
+    {
+        "id": "e0204c2b.a443e",
+        "type": "function",
+        "z": "254715fb.bf07ea",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 600,
+        "y": 400,
+        "wires": [
+            [
+                "8f3c0b95.720938"
+            ]
+        ]
+    },
+    {
+        "id": "10b9f4c4.589cab",
+        "type": "function",
+        "z": "254715fb.bf07ea",
+        "name": "Opcode 167 Parse Results",
+        "func": "var numParams=msg.payload[8];\nvar result=[];\nvar type = msg.payload[6];\nvar parameter = msg.payload[9];\nvar index = 10;\n\nfor (var i=0; i<numParams; i++){\n    var lookup = type+'_'+parameter;\n    var typeAndSize = global.get(lookup);\n    var dataBytes = msg.payload.slice(index,index+typeAndSize[1]);\n    index += typeAndSize[1];\n    parameter+=1;\n    \n    result[i]=parse(dataBytes,typeAndSize);\n    //result[i]=flow.parse(dataBytes, typeAndSize);\n}\n\nmsg.payload = result;\n\nreturn msg;\n\nfunction parse(data, info){\n    buffer = Buffer.from(data);\n    switch(info[0]){\n        case 'BIN':\n            return buffer;\n            \n        case 'AC':\n            return String(buffer);\n        \n        case 'INT8':\n        case 'INT16':\n        case 'INT32':\n            return buffer.readIntLE(0,info[1]);\n        \n        case 'UINT8':\n        case 'UINT16':\n        case 'UINT32':\n            return buffer.readUIntLE(0,info[1]);\n            \n        case 'FL':\n        case 'FLOAT':\n            return Math.round(buffer.readFloatLE(0)*100000)/100000;\n            \n        case 'DBL':\n        case 'DOUBLE':\n            return buffer.readDoubleLE(0);\n            \n        case 'TLP':\n            return data;\n            \n        case 'TIME':\n            return new Date(buffer.readUIntBE(0,4));\n            \n        case 'DT6':\n            return data;\n        \n        default:\n            return \"Data Type Not Recognized\";\n    }\n}\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1380,
+        "y": 340,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "8f3c0b95.720938",
+        "type": "tcp request",
+        "z": "254715fb.bf07ea",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "",
+        "x": 770,
+        "y": 400,
+        "wires": [
+            [
+                "38dea9a6.01cc86"
+            ]
+        ]
+    },
+    {
+        "id": "530c03b1.8a8e3c",
+        "type": "function",
+        "z": "254715fb.bf07ea",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1130,
+        "y": 380,
+        "wires": [
+            [
+                "10b9f4c4.589cab"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "38dea9a6.01cc86",
+        "type": "function",
+        "z": "254715fb.bf07ea",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 950,
+        "y": 400,
+        "wires": [
+            [
+                "530c03b1.8a8e3c"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "6f838a49.179dd4",
+        "type": "subflow",
+        "name": "Opcode 180 - Request multiple TLP's",
+        "info": "Requests one or more parameters (TLP's) from the device\n\nInput: <br> \ndevice group number as msg.payload.deviceGroup\ndevice address as msg.payload.deviceAddress\nIP Address as msg.payload.host\nIP Port at msg.payload.port\nTLP's requested as msg.payload.tlps. Should be formatted as an array of arrays.\nThe containing array should have a number of elements equal to the number of\nTLP's requested. Each element of that array is a 3-element array specifying the\nrequested tlp in [type, list, parameter] format. \n\nOutput:\nArray of values corresponding to the TLP's requested\n\n\nExample: msg.payload.tlps = [[17,5,6],[3,4,14]] will return an array containing\nthe value in Soft Point 6, data 7 (TLP 17,5,6) and the Analog input 5 filtered\nEU value (TLP 3,4,14).",
+        "in": [
+            {
+                "x": 140,
+                "y": 120,
+                "wires": [
+                    {
+                        "id": "b1a2e052.43487"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1660,
+                "y": 120,
+                "wires": [
+                    {
+                        "id": "35f35014.c174f",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1660,
+                "y": 200,
+                "wires": [
+                    {
+                        "id": "f73f7957.b01e48",
+                        "port": 1
+                    },
+                    {
+                        "id": "25930827.4b42a8",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "b1a2e052.43487",
+        "type": "function",
+        "z": "6f838a49.179dd4",
+        "name": "Opcode 180 - Read TLP's",
+        "func": "msg.host = msg.payload.host;\nmsg.port = msg.payload.port;\n\nvar tlpBuffer=Buffer.from([]);\nvar numParams = Buffer.from([msg.payload.tlps.length]);\n\nfor (var i=0; i<msg.payload.tlps.length; i++){\n    tlpBuffer=Buffer.concat([tlpBuffer, Buffer.from(msg.payload.tlps[i])]);\n}\n\nvar dataBytes = Buffer.from([tlpBuffer.length+1]);\n\nmsg.payload = Buffer.from([\n    msg.payload.deviceGroup,\n    msg.payload.deviceAddress,\n    3,\n    1,\n    180]);\nmsg.payload=Buffer.concat([\n    msg.payload, \n    dataBytes, \n    numParams, \n    tlpBuffer]);\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 310,
+        "y": 120,
+        "wires": [
+            [
+                "7ee0adc6.4a9b84"
+            ]
+        ]
+    },
+    {
+        "id": "7ee0adc6.4a9b84",
+        "type": "function",
+        "z": "6f838a49.179dd4",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 540,
+        "y": 120,
+        "wires": [
+            [
+                "e25bc1ea.d18f7"
+            ]
+        ]
+    },
+    {
+        "id": "e25bc1ea.d18f7",
+        "type": "tcp request",
+        "z": "6f838a49.179dd4",
+        "server": "",
+        "port": "",
+        "out": "time",
+        "splitc": "15",
+        "name": "Request to ROC",
+        "x": 760,
+        "y": 120,
+        "wires": [
+            [
+                "25930827.4b42a8"
+            ]
+        ]
+    },
+    {
+        "id": "f73f7957.b01e48",
+        "type": "function",
+        "z": "6f838a49.179dd4",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1210,
+        "y": 120,
+        "wires": [
+            [
+                "35f35014.c174f"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "25930827.4b42a8",
+        "type": "function",
+        "z": "6f838a49.179dd4",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 990,
+        "y": 120,
+        "wires": [
+            [
+                "f73f7957.b01e48"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "35f35014.c174f",
+        "type": "function",
+        "z": "6f838a49.179dd4",
+        "name": "Opcode 180 Parse Results",
+        "func": "var numParams=msg.payload[6];\nvar result=[];\nvar index = 7;\n\nfor (var i=0; i<numParams; i++){\n    var lookup = msg.payload[index]+'_'+msg.payload[index+2];\n    var typeAndSize = global.get(lookup);\n    var dataBytes = msg.payload.slice(index+3,index+3+typeAndSize[1]);\n    index += (3+typeAndSize[1]);\n    result[i]=parse(dataBytes,typeAndSize);\n}\n\nmsg.payload = result;\n\nreturn msg;\n\nfunction parse(data, info){\n    buffer = Buffer.from(data);\n    switch(info[0]){\n        case 'BIN':\n            return buffer;\n            \n        case 'AC':\n            return String(buffer);\n        \n        case 'INT8':\n        case 'INT16':\n        case 'INT32':\n            return buffer.readIntLE(0,info[1]);\n        \n        case 'UINT8':\n        case 'UINT16':\n        case 'UINT32':\n            return buffer.readUIntLE(0,info[1]);\n            \n        case 'FL':\n        case 'FLOAT':\n            return Math.round(buffer.readFloatLE(0)*100000)/100000;\n            \n        case 'DBL':\n        case 'DOUBLE':\n            return buffer.readDoubleLE(0);\n            \n        case 'TLP':\n            return data;\n            \n        case 'TIME':\n            return new Date(buffer.readUIntBE(0,4));\n            \n        case 'DT6':\n            return data;\n        \n        default:\n            return \"Data Type Not Recognized\";\n    }\n}\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1480,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "b764798b.c14cc8",
+        "type": "subflow",
+        "name": "Opcode 103 - Request System Info",
+        "info": "Requests firmware revision and  device info\n\nInput: \ndevice group number as msg.payload.deviceGroup\ndevice address as msg.payload.deviceAddress\nIP Address as msg.payload.host\nIP Port at msg.payload.port\n\nOutput:\nObject with the following keys/value pairs:\nproduct ID: 40-char string with device description\nfirmwareDate: 20-char string with date of firmware release\ndeviceNumber: address of responding device\ndeviceGroup: group number of responding device\nstationName: 20-char string with station name of responding device\nseconds: current time seconds reported by device\nminutes: current time minutes reported by device\nhours: current time hours reported by device in 24-hour format\nday: reports current calendar day reported by device\nmonth: reports current calendar month reported by device\nyear: reports current year reported by device",
+        "in": [
+            {
+                "x": 80,
+                "y": 80,
+                "wires": [
+                    {
+                        "id": "b237c48f.f88e58"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1420,
+                "y": 80,
+                "wires": [
+                    {
+                        "id": "74b730de.5fa8a",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1420,
+                "y": 160,
+                "wires": [
+                    {
+                        "id": "77b1f298.04469c",
+                        "port": 1
+                    },
+                    {
+                        "id": "de515442.1bb4b8",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "578fabb9.7f16d4",
+        "type": "tcp request",
+        "z": "b764798b.c14cc8",
+        "server": "",
+        "port": "",
+        "out": "count",
+        "splitc": "110",
+        "name": "",
+        "x": 630,
+        "y": 80,
+        "wires": [
+            [
+                "de515442.1bb4b8"
+            ]
+        ]
+    },
+    {
+        "id": "b237c48f.f88e58",
+        "type": "function",
+        "z": "b764798b.c14cc8",
+        "name": "Opcode 103 - Get device info",
+        "func": "msg.host = msg.payload.host;\nmsg.port = msg.payload.port;\n\nmsg.payload = Buffer.from([msg.payload.deviceGroup,msg.payload.deviceAddress,3,1,103,0]);\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 260,
+        "y": 80,
+        "wires": [
+            [
+                "b01dd559.181498"
+            ]
+        ]
+    },
+    {
+        "id": "b01dd559.181498",
+        "type": "function",
+        "z": "b764798b.c14cc8",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 480,
+        "y": 80,
+        "wires": [
+            [
+                "578fabb9.7f16d4"
+            ]
+        ]
+    },
+    {
+        "id": "74b730de.5fa8a",
+        "type": "function",
+        "z": "b764798b.c14cc8",
+        "name": "Parse Firmware",
+        "func": "var productID=Buffer.from(msg.payload.slice(20,60));\nvar firmwareDate=Buffer.from(msg.payload.slice(60, 80));\nvar deviceNumber = msg.payload[80];\nvar deviceGroup = msg.payload[81];\nvar stationName = Buffer.from(msg.payload.slice(82,102));\nvar seconds=msg.payload[102];\nvar minutes=msg.payload[103];\nvar hours=msg.payload[104];\nvar day=msg.payload[105];\nvar month=msg.payload[106];\nvar year=2000+msg.payload[107];\n\nproductID=productID.toString();\nfirmwareDate=firmwareDate.toString();\nstationName=stationName.toString();\n\nmsg.payload={\n    productID:productID,\n    firmwareDate:firmwareDate,\n    deviceNumber:deviceNumber,\n    deviceGroup:deviceGroup,\n    stationName:stationName,\n    seconds:seconds,\n    minutes:minutes,\n    hours:hours,\n    day:day,\n    month:month,\n    year:year,\n};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1260,
+        "y": 80,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "77b1f298.04469c",
+        "type": "function",
+        "z": "b764798b.c14cc8",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ return [null, {payload:\"Invalid request\"}]; }\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1030,
+        "y": 80,
+        "wires": [
+            [
+                "74b730de.5fa8a"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "de515442.1bb4b8",
+        "type": "function",
+        "z": "b764798b.c14cc8",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 790,
+        "y": 80,
+        "wires": [
+            [
+                "77b1f298.04469c"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "1c5aed5d.c6fee3",
+        "type": "subflow",
+        "name": "Opcode 7 - Request Date and Time",
+        "info": "Requests the current date and time from the device\n\nInput:\ndevice group number as msg.payload.deviceGroup <p><br>\ndevice address as msg.payload.deviceAddress\nIP Address as msg.payload.host\nIP Port at msg.payload.port\n\nOutput:\nArray containing values pointed to by the Opcode table requested\n",
+        "in": [
+            {
+                "x": 180,
+                "y": 180,
+                "wires": [
+                    {
+                        "id": "881350a4.980b1"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 1360,
+                "y": 180,
+                "wires": [
+                    {
+                        "id": "351bb7bb.d5c5c8",
+                        "port": 0
+                    }
+                ]
+            },
+            {
+                "x": 1360,
+                "y": 240,
+                "wires": [
+                    {
+                        "id": "25b3abca.80b8f4",
+                        "port": 1
+                    },
+                    {
+                        "id": "e4ec43e0.f69e8",
+                        "port": 1
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "6a3bbc37.5b0ce4",
+        "type": "tcp request",
+        "z": "1c5aed5d.c6fee3",
+        "server": "",
+        "port": "",
+        "out": "count",
+        "splitc": "16",
+        "name": "",
+        "x": 710,
+        "y": 180,
+        "wires": [
+            [
+                "e4ec43e0.f69e8"
+            ]
+        ]
+    },
+    {
+        "id": "881350a4.980b1",
+        "type": "function",
+        "z": "1c5aed5d.c6fee3",
+        "name": "Opcode 7 - Request Time",
+        "func": "msg.host = msg.payload.host;\nmsg.port = msg.payload.port;\nmsg.payload = Buffer.from([msg.payload.deviceGroup,msg.payload.deviceAddress,3,1,7,0]);\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 350,
+        "y": 180,
+        "wires": [
+            [
+                "faab1bff.c58728"
+            ]
+        ]
+    },
+    {
+        "id": "351bb7bb.d5c5c8",
+        "type": "function",
+        "z": "1c5aed5d.c6fee3",
+        "name": "Parse Time",
+        "func": "var seconds=(\"0\"+msg.payload[6]).slice(-2);\nvar minutes=(\"0\"+msg.payload[7]).slice(-2);\nvar hours=msg.payload[8];\nvar day=msg.payload[9];\nvar month=msg.payload[10];\nvar year=2000+msg.payload[11];\nvar leapYear=msg.payload[12];\nvar dayOfWeek=msg.payload[13];\nvar amPm = \"AM\";\n\nif (hours>12){\n    amPm=\"PM\";\n    hours-=12;\n}\n\nmsg.payload=hours+\":\"+minutes+\":\"+seconds+amPm+\" \"+month+'-'+day+\"-\"+year;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 1230,
+        "y": 180,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "faab1bff.c58728",
+        "type": "function",
+        "z": "1c5aed5d.c6fee3",
+        "name": "Add CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length; i++)\n{\n    var curByte = reflect8(body[i]);\n    crc = (crc ^ (curByte << 8)) & 0xFFFF;\n    var pos = (crc >> 8) & 0xFF;\n    crc = (crc << 8) & 0xFFFF;\n    crc = (crc ^ crcTable[pos]) & 0xFFFF;\n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nnewArray[msg.payload.length]=(crc&0xFF);\nnewArray[msg.payload.length+1]=((crc>>>8)&0xFF);\n\nmsg.payload=Buffer.from(newArray);\nmsg.host = msg.host;\nmsg.port = msg.port;\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 560,
+        "y": 180,
+        "wires": [
+            [
+                "6a3bbc37.5b0ce4"
+            ]
+        ]
+    },
+    {
+        "id": "25b3abca.80b8f4",
+        "type": "function",
+        "z": "1c5aed5d.c6fee3",
+        "name": "Error check",
+        "func": "if (msg.payload[4]==255){ \n    node.warn(\"Invalid Request\");\n    return [null, {payload:\"Invalid request\"}]; \n}\nelse { return [msg, null];}",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 1050,
+        "y": 180,
+        "wires": [
+            [
+                "351bb7bb.d5c5c8"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "e4ec43e0.f69e8",
+        "type": "function",
+        "z": "1c5aed5d.c6fee3",
+        "name": "Check CRC",
+        "func": "var crc=0x0000;\nvar body = msg.payload;\nvar newBody=[];\nvar castMask = 0xFFFF;\nvar i=0;\nvar test = [];\nvar newArray=[];\n\nvar crcTable =\n[\n    0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,\n    0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,0x8063,0x0066,0x006C,0x8069,\n    0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,\n    0x0044,0x8041,0x80C3,0x00C6,0x00CC,0x80C9,0x00D8,0x80DD,0x80D7,0x00D2,\n    0x00F0,0x80F5,0x80FF,0x00FA,0x80EB,0x00EE,0x00E4,0x80E1,0x00A0,0x80A5,\n    0x80AF,0x00AA,0x80BB,0x00BE,0x00B4,0x80B1,0x8093,0x0096,0x009C,0x8099,\n    0x0088,0x808D,0x8087,0x0082,0x8183,0x0186,0x018C,0x8189,0x0198,0x819D,\n    0x8197,0x0192,0x01B0,0x81B5,0x81BF,0x01BA,0x81AB,0x01AE,0x01A4,0x81A1,\n    0x01E0,0x81E5,0x81EF,0x01EA,0x81FB,0x01FE,0x01F4,0x81F1,0x81D3,0x01D6,\n    0x01DC,0x81D9,0x01C8,0x81CD,0x81C7,0x01C2,0x0140,0x8145,0x814F,0x014A,\n    0x815B,0x015E,0x0154,0x8151,0x8173,0x0176,0x017C,0x8179,0x0168,0x816D,\n    0x8167,0x0162,0x8123,0x0126,0x012C,0x8129,0x0138,0x813D,0x8137,0x0132,\n    0x0110,0x8115,0x811F,0x011A,0x810B,0x010E,0x0104,0x8101,0x8303,0x0306,\n    0x030C,0x8309,0x0318,0x831D,0x8317,0x0312,0x0330,0x8335,0x833F,0x033A,\n    0x832B,0x032E,0x0324,0x8321,0x0360,0x8365,0x836F,0x036A,0x837B,0x037E,\n    0x0374,0x8371,0x8353,0x0356,0x035C,0x8359,0x0348,0x834D,0x8347,0x0342,\n    0x03C0,0x83C5,0x83CF,0x03CA,0x83DB,0x03DE,0x03D4,0x83D1,0x83F3,0x03F6,\n    0x03FC,0x83F9,0x03E8,0x83ED,0x83E7,0x03E2,0x83A3,0x03A6,0x03AC,0x83A9,\n    0x03B8,0x83BD,0x83B7,0x03B2,0x0390,0x8395,0x839F,0x039A,0x838B,0x038E,\n    0x0384,0x8381,0x0280,0x8285,0x828F,0x028A,0x829B,0x029E,0x0294,0x8291,\n    0x82B3,0x02B6,0x02BC,0x82B9,0x02A8,0x82AD,0x82A7,0x02A2,0x82E3,0x02E6,\n    0x02EC,0x82E9,0x02F8,0x82FD,0x82F7,0x02F2,0x02D0,0x82D5,0x82DF,0x02DA,\n    0x82CB,0x02CE,0x02C4,0x82C1,0x8243,0x0246,0x024C,0x8249,0x0258,0x825D,\n    0x8257,0x0252,0x0270,0x8275,0x827F,0x027A,0x826B,0x026E,0x0264,0x8261,\n    0x0220,0x8225,0x822F,0x022A,0x823B,0x023E,0x0234,0x8231,0x8213,0x0216,\n    0x021C,0x8219,0x0208,0x820D,0x8207,0x0202\n\n];\n\n\nfor (var i = 0; i < body.length-2; i++)\n{\n    var curByte = reflect8(body[i]);\n \n    //var curByte = body[i]&0xFF;\n    \n    // update the MSB of crc value with next input byte \n    crc = (crc ^ (curByte << 8)) & castMask;\n    \n    // this MSB byte value is the index into the lookup table \n    var pos = (crc >> 8) & 0xFF;\n    \n    // shift out this index \n    crc = (crc << 8) & castMask;\n    \n    // XOR-in remainder from lookup table using the calculated index \n    crc = (crc ^ crcTable[pos]) & castMask;\n    \n    newArray[i]=msg.payload[i];\n}\n\ncrc=reflect16(crc);\n\nvar payloadCrc = [body[body.length-1], body[body.length-2], (crc>>8)&0xFF, crc&0xFF];\n\nif ((body[body.length-1]===((crc>>8)&0xff))&&(body[body.length-2]===(crc&0xFF))){\n    for (i=0; i<body.length-2; i++){\n        newBody[i]=body[i];\n    }\n    return[{payload:newBody}, null];\n}\nelse{\n    node.warn(\"Invalid CRC\");\n    return[null, {payload:\"Invalid CRC\"}];\n}\n\nreturn msg;\n\n\nfunction reflect8(byte){\n    var newByte=0x00;\n    if ((byte&0x01)==0x01) newByte=newByte|0x80;\n    if ((byte&0x02)==0x02) newByte=newByte|0x40;\n    if ((byte&0x04)==0x04) newByte=newByte|0x20;\n    if ((byte&0x08)==0x08) newByte=newByte|0x10;\n    if ((byte&0x10)==0x10) newByte=newByte|0x08;\n    if ((byte&0x20)==0x20) newByte=newByte|0x04;\n    if ((byte&0x40)==0x40) newByte=newByte|0x02;\n    if ((byte&0x80)==0x80) newByte=newByte|0x01;\n    return (newByte&0xFF);\n}\n\nfunction reflect16(word){\n    var newWord=0x0000;\n    if ((word&0x0001)==0x0001) newWord=newWord|0x8000;\n    if ((word&0x0002)==0x0002) newWord=newWord|0x4000;\n    if ((word&0x0004)==0x0004) newWord=newWord|0x2000;\n    if ((word&0x0008)==0x0008) newWord=newWord|0x1000;\n    if ((word&0x0010)==0x0010) newWord=newWord|0x0800;\n    if ((word&0x0020)==0x0020) newWord=newWord|0x0400;\n    if ((word&0x0040)==0x0040) newWord=newWord|0x0200;\n    if ((word&0x0080)==0x0080) newWord=newWord|0x0100;\n    if ((word&0x0100)==0x0100) newWord=newWord|0x0080;\n    if ((word&0x0200)==0x0200) newWord=newWord|0x0040;\n    if ((word&0x0400)==0x0400) newWord=newWord|0x0020;\n    if ((word&0x0800)==0x0800) newWord=newWord|0x0010;\n    if ((word&0x1000)==0x1000) newWord=newWord|0x0008;\n    if ((word&0x2000)==0x2000) newWord=newWord|0x0004;\n    if ((word&0x4000)==0x4000) newWord=newWord|0x0002;\n    if ((word&0x8000)==0x8000) newWord=newWord|0x0001;\n    return (newWord&0xFFFF);\n}\n\n",
+        "outputs": "2",
+        "noerr": 0,
+        "x": 870,
+        "y": 180,
+        "wires": [
+            [
+                "25b3abca.80b8f4"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "1349b6.833d364a",
+        "type": "tab",
+        "label": "ROC Drivers",
+        "disabled": true,
+        "info": ""
+    },
+    {
+        "id": "3092ca4e.51a426",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for Opcode 7",
+        "topic": "",
+        "payload": "{\"deviceGroup\" : 240, \"deviceAddress\" : 240, \"host\":\"192.168.0.107\", \"port\":4000}",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 270,
+        "y": 180,
+        "wires": [
+            [
+                "dd62f3ea.68cad"
+            ]
+        ]
+    },
+    {
+        "id": "6d8c4d82.a5b9c4",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for opcode 103",
+        "topic": "",
+        "payload": "{\"deviceGroup\" : 240, \"deviceAddress\" : 240, \"host\":\"192.168.0.107\", \"port\":4000}",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 280,
+        "y": 260,
+        "wires": [
+            [
+                "a2e00ef5.d83fe"
+            ]
+        ]
+    },
+    {
+        "id": "4fad4c1.5c9fab4",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for opcode 180",
+        "topic": "",
+        "payload": "{\"deviceGroup\" : 240, \"deviceAddress\" : 240, \"host\":\"192.168.0.107\", \"port\":4000, \"tlps\":[[3,68,0], [3,68,1], [3,68,3], [3,68,4],[3,68,14]] }",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 280,
+        "y": 340,
+        "wires": [
+            [
+                "3e6e3016.d3e7b"
+            ]
+        ]
+    },
+    {
+        "id": "5979f64d.5caf88",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for opcode 167",
+        "topic": "",
+        "payload": "{\"tlp\":[17,0,0], \"params\":22, \"host\":\"192.168.0.107\", \"port\":4000, \"deviceGroup\":240, \"deviceAddress\":240}",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 280,
+        "y": 420,
+        "wires": [
+            [
+                "ef550ed1.74e02"
+            ]
+        ]
+    },
+    {
+        "id": "f43d09b5.49c148",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for opcode 162",
+        "topic": "",
+        "payload": "{\"tlp\":[17,5,13], \"value\":6.13, \"deviceGroup\":240, \"deviceAddress\":240, \"host\":\"192.168.0.107\", \"port\":4000}",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 280,
+        "y": 500,
+        "wires": [
+            [
+                "202f449b.0fc93c"
+            ]
+        ]
+    },
+    {
+        "id": "d482606b.5c73a",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for Opcode 166",
+        "topic": "",
+        "payload": "{\"tlp\":[17,5,3], \"numParams\":3, \"values\":[10.123,9.123,8.123], \"host\":\"192.168.0.107\", \"port\":4000, \"deviceGroup\":240, \"deviceAddress\":240}",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 280,
+        "y": 660,
+        "wires": [
+            [
+                "ea2178a9.8dc558"
+            ]
+        ]
+    },
+    {
+        "id": "359a96d8.e44bda",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for opcode 181",
+        "topic": "",
+        "payload": "{\"tlps\":[[17,5,7, 2.345],[17,5,8, 34.567],[17,5,9, -456.789]], \"host\":\"192.168.0.107\", \"port\":4000, \"deviceAddress\":240, \"deviceGroup\":240}",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 280,
+        "y": 740,
+        "wires": [
+            [
+                "d8a58419.058a98"
+            ]
+        ]
+    },
+    {
+        "id": "75bd0312.d6621c",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for opcode 10",
+        "topic": "",
+        "payload": "{\"table\":1, \"start\":1, \"params\":44, \"deviceGroup\":240, \"deviceAddress\":240, \"host\":\"192.168.0.107\", \"port\":4000}",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 270,
+        "y": 820,
+        "wires": [
+            [
+                "c57ab1b.5c5a75"
+            ]
+        ]
+    },
+    {
+        "id": "f394365e.46c6a8",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for get device type",
+        "topic": "",
+        "payload": "{\"deviceGroup\":240, \"deviceAddress\":240, \"host\":\"192.168.0.107\", \"port\":4000}",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 290,
+        "y": 580,
+        "wires": [
+            [
+                "6843c414.e4dd6c"
+            ]
+        ]
+    },
+    {
+        "id": "dcbc4390.8b0b1",
+        "type": "file in",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "filename": "/home/devuser/apps/ROCdrivers/dataTypes.csv",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": false,
+        "x": 620,
+        "y": 1080,
+        "wires": [
+            [
+                "9e409228.d04ff"
+            ]
+        ]
+    },
+    {
+        "id": "ca492d76.05991",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "On Startup",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 240,
+        "y": 1080,
+        "wires": [
+            [
+                "dcbc4390.8b0b1"
+            ]
+        ]
+    },
+    {
+        "id": "9e409228.d04ff",
+        "type": "function",
+        "z": "1349b6.833d364a",
+        "name": "Load TLP/Datatype matrix",
+        "func": "/*\nreads the datatype matrix and saves as global variables.\nThis allows datatype to be determined based on TLP.\n*/\n\n\ntlps = msg.payload.split(\"\\n\");\nfor (i=0; i<tlps.length; i++){\n    var entry = tlps[i].split(',');\n    var name = entry[0]+'_'+entry[1];\n    var details = [entry[2], Number(entry[3])];\n    global.set(name,details);\n}\n\nnode.warn(\"Datatypes loaded\");\n\nflow.set(\"parse()\", function (data, info){\n    buffer = Buffer.from(data);\n    switch(info[0]){\n        case 'BIN':\n            return buffer;\n            \n        case 'AC':\n            return String(buffer);\n        \n        case 'INT8':\n        case 'INT16':\n        case 'INT32':\n            return buffer.readIntLE(0,info[1]);\n        \n        case 'UINT8':\n        case 'UINT16':\n        case 'UINT32':\n            return buffer.readUIntLE(0,info[1]);\n            \n        case 'FL':\n        case 'FLOAT':\n            return buffer.readFloatLE(0);\n            \n        case 'DBL':\n        case 'DOUBLE':\n            return buffer.readDoubleLE(0);\n            \n        case 'TLP':\n            return data;\n            \n        case 'TIME':\n            return new Date(buffer.readUIntBE(0,4));\n            \n        case 'DT6':\n            return data;\n        \n        default:\n            return \"Data Type Not Recognized\";\n    }\n});\n\nreturn null;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 970,
+        "y": 1080,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "56be94aa.26ef0c",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Test inject",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 240,
+        "y": 1020,
+        "wires": [
+            [
+                "cbabfb7b.da9ea8"
+            ]
+        ]
+    },
+    {
+        "id": "cbabfb7b.da9ea8",
+        "type": "function",
+        "z": "1349b6.833d364a",
+        "name": "Read global value",
+        "func": "var test = global.get(\"Opcode1\");\nnode.warn(global.get(\"Opcode0\"));\nnode.warn(test);\nnode.warn(global.get(\"Opcode2\"));\n\nmsg.payload=test;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 530,
+        "y": 1020,
+        "wires": [
+            [
+                "94d4cc47.1b8ea"
+            ]
+        ]
+    },
+    {
+        "id": "94d4cc47.1b8ea",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 1020,
+        "wires": []
+    },
+    {
+        "id": "dd62f3ea.68cad",
+        "type": "subflow:1c5aed5d.c6fee3",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "x": 620,
+        "y": 180,
+        "wires": [
+            [
+                "a0ba8186.b7dd1"
+            ],
+            [
+                "a0ba8186.b7dd1"
+            ]
+        ]
+    },
+    {
+        "id": "a0ba8186.b7dd1",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "a2e00ef5.d83fe",
+        "type": "subflow:b764798b.c14cc8",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "x": 620,
+        "y": 260,
+        "wires": [
+            [
+                "d0a847a6.806048"
+            ],
+            [
+                "d0a847a6.806048"
+            ]
+        ]
+    },
+    {
+        "id": "3e6e3016.d3e7b",
+        "type": "subflow:6f838a49.179dd4",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "x": 630,
+        "y": 340,
+        "wires": [
+            [
+                "cf4aa690.d33498"
+            ],
+            [
+                "cf4aa690.d33498"
+            ]
+        ]
+    },
+    {
+        "id": "cf4aa690.d33498",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "payload",
+        "x": 1030,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "ef550ed1.74e02",
+        "type": "subflow:254715fb.bf07ea",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "x": 690,
+        "y": 420,
+        "wires": [
+            [
+                "1b05a2be.565fbd"
+            ],
+            [
+                "1b05a2be.565fbd"
+            ]
+        ]
+    },
+    {
+        "id": "1b05a2be.565fbd",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "202f449b.0fc93c",
+        "type": "subflow:6990bd0e.c0c8d4",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "x": 690,
+        "y": 500,
+        "wires": [
+            [
+                "afdcf388.5a407"
+            ],
+            [
+                "afdcf388.5a407"
+            ]
+        ]
+    },
+    {
+        "id": "afdcf388.5a407",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "6843c414.e4dd6c",
+        "type": "subflow:ecbfba54.279a58",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "x": 570,
+        "y": 580,
+        "wires": [
+            [
+                "c82e8e4c.bf9a9"
+            ],
+            [
+                "c82e8e4c.bf9a9"
+            ]
+        ]
+    },
+    {
+        "id": "c82e8e4c.bf9a9",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "d0a847a6.806048",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "ea2178a9.8dc558",
+        "type": "subflow:a71e311.7991dd",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "x": 680,
+        "y": 660,
+        "wires": [
+            [
+                "926e9dda.f4a94"
+            ],
+            [
+                "926e9dda.f4a94"
+            ]
+        ]
+    },
+    {
+        "id": "926e9dda.f4a94",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "d8a58419.058a98",
+        "type": "subflow:2dc0e633.bddc6a",
+        "z": "1349b6.833d364a",
+        "name": "Opcode 181 - Set multiple TLP's",
+        "x": 610,
+        "y": 740,
+        "wires": [
+            [
+                "84437b7c.24e148"
+            ],
+            [
+                "84437b7c.24e148"
+            ]
+        ]
+    },
+    {
+        "id": "84437b7c.24e148",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 740,
+        "wires": []
+    },
+    {
+        "id": "c57ab1b.5c5a75",
+        "type": "subflow:77b38840.322018",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "x": 640,
+        "y": 820,
+        "wires": [
+            [
+                "95df7ee9.41b6a"
+            ],
+            [
+                "95df7ee9.41b6a"
+            ]
+        ]
+    },
+    {
+        "id": "95df7ee9.41b6a",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 820,
+        "wires": []
+    },
+    {
+        "id": "3eb8e302.a2093c",
+        "type": "inject",
+        "z": "1349b6.833d364a",
+        "name": "Inject for opcode 11",
+        "topic": "",
+        "payload": "{\"table\":1, \"start\":1, \"values\":[2.23, 2.34, 2.45, 2.56, 2.67,2.78], \"deviceGroup\":240, \"deviceAddress\":240, \"host\":\"192.168.0.107\", \"port\":4000}",
+        "payloadType": "json",
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "x": 270,
+        "y": 900,
+        "wires": [
+            [
+                "4f5546cd.41eba8"
+            ]
+        ]
+    },
+    {
+        "id": "da6dd0c1.7338a",
+        "type": "debug",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "active": true,
+        "console": "false",
+        "complete": "false",
+        "x": 1030,
+        "y": 900,
+        "wires": []
+    },
+    {
+        "id": "4f5546cd.41eba8",
+        "type": "subflow:8debf4ec.a602b8",
+        "z": "1349b6.833d364a",
+        "name": "",
+        "x": 660,
+        "y": 900,
+        "wires": [
+            [
+                "da6dd0c1.7338a"
+            ],
+            []
+        ]
+    }
+]
