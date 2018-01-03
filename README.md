@@ -6,7 +6,7 @@ This repository contains flows for use in Node-RED for interacting with Emerson 
 The flows don't use any nodes that are not included in Node-RED by default. The goal is to support the ROC Protocol without having to install any additional nodes, meaning it can be done as a copy-and-paste operation from a computer and doesn't require an active internet connection.
 
 # Adding the drivers to a Node-RED flow
-### Note: This instructions are geared towards the user who has never used github before. There are often other, easier ways to accomplish the following for those already familiar.
+### Note: This instructions are geared towards the user who has never used GitHub before. There are often other, easier ways to accomplish the following for those already familiar.
 ### 1) Download files to your computer
 Go to the main the main node-red-contrib-roc directory (you're likely there now) and click on the green "Clone or download" button and select "Download ZIP." A ZIP file containing the drivers and dataType list will be downloaded. 
 
@@ -36,4 +36,4 @@ If the connection between the ZumLink radio and the ROC is made using a serial c
 
 In the flow that uses the ROC drivers, you'll use the IP address of the radio as the "host" field that gets injected into the driver subflow. The "port" needs to match the terminal server port for the COM port in use.
 
-For more information on using the ZumLink programmable radio, see [the support section of the FreeWave website](www.freewave.com/support) for radio functionality and the [github wiki](https://github.com/FreeWaveTechnologies/ZumIQ/wiki) for programmability and ZumIQ related support.
+For more information on using the ZumLink programmable radio, see [the support section of the FreeWave website](www.freewave.com/support) for radio functionality and the [GitHub wiki](https://github.com/FreeWaveTechnologies/ZumIQ/wiki) for programmability and ZumIQ related support.
